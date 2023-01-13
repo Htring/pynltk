@@ -352,3 +352,39 @@ def head_content2jsonl(head: List[str], content: List[List]) -> List[Dict]:
         line = {h: d for h, d in zip(head, i)}
         data.append(line)
     return data
+
+
+def read_lines(fp: Path, verbose: bool = True, **kwargs):
+    """
+    read lines from fp
+    Args:
+        fp:
+        verbose:
+        **kwargs:
+
+    Returns:
+
+    """
+    if verbose:
+        logger.info(f"read data from {fp}")
+    with open(file=fp, **kwargs) as reader:
+        return reader.readline()
+
+
+def save_lines(fp: Path, data_list: List[str], verbose: bool = True, **kwargs) -> None:
+    """
+    save data to path
+    Args:
+        data_list:
+        fp:
+        verbose:
+        **kwargs:
+
+    Returns:
+
+    """
+    if verbose:
+        logger.info(f"save data to {fp}")
+    kwargs.update({"mode":"w"})
+    with open(file=fp, **kwargs) as writer:
+        writer.write("\n".join(data_list))
