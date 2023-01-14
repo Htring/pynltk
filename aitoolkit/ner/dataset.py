@@ -68,7 +68,7 @@ class NERDataProcessorCommon(DataProcessor):
             batch_inputs
 
         """
-        batch.sort(key=lambda x: len(x.text_a), reverse=True)
+        batch.sort(key=lambda x: len(x.text), reverse=True)
         max_len = len(batch[0].text)
         batch_inputs = []
         batch_targets = []
@@ -94,6 +94,9 @@ class NERDataProcessorCommon(DataProcessor):
         self.train_examples, self.dev_examples, self.test_examples = [], [], []
         self.train_data_loader, self.dev_data_loader, self.test_data_loader = None, None, None
         self._load_data()
+
+    def get_special_tags(self):
+        return [self.unk_tag, self.pad_tag]
 
     def _load_data(self):
         self.train_examples = self._create_examples(read_seq_tag_file(Path(self.data_dir, "train.txt")), "train")
@@ -139,7 +142,7 @@ class NERDataProcessorCommon(DataProcessor):
             self.labels.update(label)
             self.chars.update(sentence)
             examples.append(InputExample(guid=guid, text=sentence, label=label))
-        examples.sort(key=lambda x: -len(x.text_a))
+        examples.sort(key=lambda x: -len(x.text))
         return examples
 
     def get_data_loaders(self, char2idx: dict, tag2idx: dict, batch_size: int = 32, ):

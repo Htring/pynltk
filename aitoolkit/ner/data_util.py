@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 
 from loguru import logger
-from common import io_utils
+from ..common import io_utils
 
 
 def _convert2json(fp: str, target_fp: str, split="\t", tag_type="bio"):
