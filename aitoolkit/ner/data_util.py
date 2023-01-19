@@ -30,7 +30,7 @@ def _convert2json(fp: str, target_fp: str, split="\t", tag_type="bio"):
                 if entity['value'] not in label_dict[entity['type']]:
                     label_dict[entity['type']][entity['value']] = [[entity['begin'], entity['end']]]
                 else:
-                    label_dict[entity['type']][entity['value']].append([entity['begin'], entity['end']])
+                    label_dict[entity['type']][entity['value']].append([entity['begin'], entity['end']])   # noqa
         return tmp_dict
 
     dict_lst, tmp_char_lst, tmp_tag_lst = [], [], []
@@ -259,7 +259,7 @@ def read_seq_tag_file(fp: Path, verbose: bool = True, **kwargs) -> List:
     sentence, label = [], []
     with open(file=fp, **kwargs) as reader:
         for line in reader:
-            if len(line) == 0 or line.startswith('-DOCSTART') or line[0] == "\n":
+            if len(line) == 0 or line.startswith('-DOCSTART') or line[0] == "\n":  # noqa
                 if len(sentence) > 0:
                     data.append((sentence, label))
                     sentence = []
@@ -270,6 +270,4 @@ def read_seq_tag_file(fp: Path, verbose: bool = True, **kwargs) -> List:
             label.append(splits[-1])
         if len(sentence) > 0:
             data.append((sentence, label))
-            sentence = []
-            label = []
     return data
