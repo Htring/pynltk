@@ -4,11 +4,39 @@
 # @Time      :2022/12/3 23:28
 # @Author    :juzipi
 import json
+import os
 import pickle
 import csv
 from pathlib import Path
 from typing import List, Dict
 from loguru import logger
+from functools import wraps
+
+
+def mkdir_decorator(arg_index: int = 0, kind: int = 0):
+    """
+    for func create dir
+    Args:
+        kind: path type, 0 is default and is file path, 1 is dir
+        arg_index: func path arg index
+    Returns:
+
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            path: Path = args[arg_index]
+            assert isinstance(path, Path), f'path must type is pathlib.Path, input is {type(path).__name__}'
+            if kind == 1:
+                file_dir = path
+            elif kind == 0:
+                file_dir = path.parent
+            else:
+                raise Exception(f"kind value must int and in [0, 1], you input is {kind}, type is {type(kind)}")
+            file_dir.mkdir(exist_ok=True)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 def save_pickle(obj: object, file_path: Path, verbose=True) -> None:
@@ -44,6 +72,7 @@ def load_pickle(file_path: Path, verbose=True):
         raise Exception(str(e))
 
 
+@mkdir_decorator(arg_index=1, kind=0)
 def save_json(obj: object, file_path: Path):
     """
     save object to file path with json style
@@ -156,6 +185,7 @@ def __load_t_csv(fp: Path, is_include_head: bool = True, file_type='csv', verbos
     return data
 
 
+@mkdir_decorator(arg_index=1, kind=0)
 def save_csv(data: List[Dict], fp: Path, write_head: bool = True, verbose: bool = True) -> None:
     """
         save data to csv
@@ -171,6 +201,7 @@ def save_csv(data: List[Dict], fp: Path, write_head: bool = True, verbose: bool 
     __save_t_csv(data, fp, write_head, verbose, "csv")
 
 
+@mkdir_decorator(arg_index=1, kind=0)
 def save_tsv(data: List[Dict], fp: Path, write_head: bool = True, verbose: bool = True) -> None:
     """
         save data to tsv
@@ -213,6 +244,7 @@ def __save_t_csv(data: List[Dict], fp: Path, write_head: bool = True, verbose: b
         writer.writerows(data)
 
 
+@mkdir_decorator(arg_index=1, kind=0)
 def save_jsonl(fp: Path, data: List[Dict], verbose: bool = True) -> None:  # noqa
     """
     save data to jsonl file
@@ -371,6 +403,7 @@ def read_lines(fp: Path, verbose: bool = True, **kwargs):
         return reader.readline()
 
 
+@mkdir_decorator(arg_index=0, kind=0)
 def save_lines(fp: Path, data_list: List[str], verbose: bool = True, **kwargs) -> None:
     """
     save data to path
