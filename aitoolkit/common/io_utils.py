@@ -4,7 +4,6 @@
 # @Time      :2022/12/3 23:28
 # @Author    :juzipi
 import json
-import os
 import pickle
 import csv
 from pathlib import Path
@@ -386,7 +385,7 @@ def head_content2jsonl(head: List[str], content: List[List]) -> List[Dict]:
     return data
 
 
-def read_lines(fp: Path, verbose: bool = True, **kwargs):
+def read_lines(fp: Path, verbose: bool = True, **kwargs) -> List[str]:
     """
     read lines from fp
     Args:
@@ -400,7 +399,7 @@ def read_lines(fp: Path, verbose: bool = True, **kwargs):
     if verbose:
         logger.info(f"read data from {fp}")
     with open(file=fp, **kwargs) as reader:
-        return reader.readline()
+        return reader.readlines()
 
 
 @mkdir_decorator(arg_index=0, kind=0)
@@ -418,6 +417,6 @@ def save_lines(fp: Path, data_list: List[str], verbose: bool = True, **kwargs) -
     """
     if verbose:
         logger.info(f"save data to {fp}")
-    kwargs.update({"mode":"w"})
+    kwargs.update({"mode": "w"})
     with open(file=fp, **kwargs) as writer:
         writer.write("\n".join(data_list))
