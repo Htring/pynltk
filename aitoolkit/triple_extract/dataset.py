@@ -210,7 +210,8 @@ class PCNNDataProcessor(DataProcessor):
                  data_dir,
                  batch_size: int = 128,
                  pos_limit: int = 30,
-                 max_seq_length: int = 512):
+                 max_seq_length: int = 512,
+                 chinese_split: bool = True):
         """
 
         Args:
@@ -219,7 +220,7 @@ class PCNNDataProcessor(DataProcessor):
             pos_limit: entity position limit
             max_seq_length: sentence max length
         """
-        super().__init__(data_dir, pos_limit=pos_limit)
+        super().__init__(data_dir, pos_limit=pos_limit, chinese_split=chinese_split)
         self.batch_size = batch_size
         self.char2idx, self.idx2char = {}, {}
         self.idx2tag, self.tag2idx = {}, {}
