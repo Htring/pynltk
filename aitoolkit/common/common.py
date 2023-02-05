@@ -48,6 +48,6 @@ def singleton(cls):
             with _lock:
                 if cls not in _instance:
                     _instance[cls] = cls(*args, **kwargs)
-                return _instance[[cls]]
+                return _instance[cls]
     return wrapper
 
