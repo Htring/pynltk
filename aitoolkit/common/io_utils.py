@@ -38,6 +38,7 @@ def mkdir_decorator(arg_index: int = 0, kind: int = 0):
     return decorator
 
 
+@mkdir_decorator(arg_index=1, kind=0)
 def save_pickle(obj: object, file_path: Path, verbose=True) -> None:
     """
     save object to file path with pickle style
@@ -243,7 +244,7 @@ def __save_t_csv(data: List[Dict], fp: Path, write_head: bool = True, verbose: b
         writer.writerows(data)
 
 
-@mkdir_decorator(arg_index=1, kind=0)
+@mkdir_decorator(arg_index=0, kind=0)
 def save_jsonl(fp: Path, data: List[Dict], verbose: bool = True) -> None:  # noqa
     """
     save data to jsonl file
