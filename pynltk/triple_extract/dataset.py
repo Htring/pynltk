@@ -3,15 +3,20 @@
 # @FileName  :dataset.py
 # @Time      :2023/1/20 14:34
 # @Author    :juzipi
+import math
 import os
 from collections import OrderedDict
+from itertools import cycle
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Union
 import torch
-from torch.utils.data import Dataset, DataLoader
+from pynltk.common import io_utils
+from transformers import BertTokenizer
+from torch.utils.data import Dataset, DataLoader, IterableDataset, get_worker_info
 from ..common.vocab import Vocab
 from ..common.serializer import Serializer
 from ..common.io_utils import load_csv2jsonl
+import numpy as np
 
 
 def _handle_attribute_data(attribute_data: List[Dict]) -> Dict:
@@ -125,7 +130,35 @@ def _add_pos_seq(train_data: List[Dict], pos_limit):
                 d['seq_len'] - entities_idx[1])
 
 
-class DataProcessor(object):
+class DataProcessorBase(object):
+
+    def __init__(self, data_dir: Union[Path, str]):
+        self.data_dir = data_dir if isinstance(data_dir, Path) else Path(data_dir)
+
+    def _check_corpus(self, file_list):
+        """
+        check file names exist, and file name must equal to define
+        Args:
+            file_list: file names
+
+        Returns:
+
+        """
+        if not self.data_dir.exists():
+            raise Exception(f"data dir {self.data_dir} not exist")
+        files = os.listdir(self.data_dir)
+        not_in = []
+        for file in file_list:
+            if file not in files:
+                not_in.append(file)
+        info = '【{}】 not in {}, file name must 【{}】'.format(",".join(not_in),
+                                                            self.data_dir,
+                                                            ",".join(file_list))
+        if not_in:
+            raise Exception(info)
+
+
+class DataProcessor(DataProcessorBase):
     _train_file_name = "train.csv"
     _valid_file_name = "valid.csv"
     _test_file_name = "test.csv"
@@ -140,23 +173,13 @@ class DataProcessor(object):
             min_freq: vocab 构建时的最低词频控制
             chinese_split: 是否需要分词
         """
-        self.data_dir = Path(data_dir)
+        super().__init__(data_dir)
         self.chinese_split = chinese_split
         self.min_freq = min_freq
         self.train_examples, self.valid_examples, self.test_examples = None, None, None
         self.vocab = Vocab("triple_extract")
         self.pos_limit: int = pos_limit
-        self._check_corpus()
-
-    def _check_corpus(self):
-        if not self.data_dir.exists():
-            raise Exception(f"data dir {self.data_dir} not exist")
-        files = os.listdir(self.data_dir)
-        not_in = []
-        file_list = [self._train_file_name, self._valid_file_name, self._test_file_name]
-        for file in file_list:
-            if file not in files:
-                not_in.append(file)
+        self._check_corpus([self._train_file_name, self._valid_file_name, self._test_file_name, self._attr_file_name])
 
     def build_examples(self, *args, **kwargs):
         """
@@ -323,3 +346,140 @@ class PCNNDataProcessor(DataProcessor):
                                    shuffle=True,
                                    collate_fn=self.collate_fn(self.max_seq_length))
         return train_datasets, valid_datasets, test_datasets
+
+
+class DataProcessorBert(DataProcessorBase):
+    _train_file_name = "train_triples.json"
+    _valid_file_name = "dev_triples.json"
+    _test_file_name = "test_triples.json"
+    _rel2id_file_name = "rel2id.json"
+
+    def __init__(self, data_dir):
+        super(DataProcessorBert, self).__init__(data_dir)
+        self._check_corpus([self._train_file_name, self._valid_file_name, self._test_file_name, self._rel2id_file_name])
+        self.rel2id, self.id2rel = io_utils.load_json(Path(self.data_dir, self._rel2id_file_name))
+
+
+class CasRelDataProcessor(DataProcessorBert):
+    __doc__ = """ CasRel triple extract data processor """
+
+    def __init__(self, data_dir, pre_model, max_length, batch_size: int):
+        super(CasRelDataProcessor, self).__init__(data_dir)
+        self.tokenizer = BertTokenizer.from_pretrained(pre_model)
+        self.max_length = max_length
+        self.batch_size = batch_size
+
+    class RelIterableDataset(IterableDataset):  # noqa
+        """
+        big data read
+        """
+
+        def __init__(self, file_path, tokenizer, max_seq_len, batch_size, rel2id: dict):
+            self.file_path = file_path
+            self.info = self._get_file_info(file_path)
+            self.start = self.info['start']
+            self.end = self.info['end']
+            self.tokenizer = tokenizer
+            self.max_seq_len = max_seq_len
+            self.rel2id = rel2id
+            self.num_rel = len(self.rel2id)
+            self.batch_size = batch_size
+
+        def __iter__(self):
+            worker_info = get_worker_info()
+            if worker_info is None:
+                iter_start = self.start
+                iter_end = self.end
+            else:
+                per_worker = int(math.ceil((self.end - self.start) / float(worker_info.num_workers)))
+                worker_id = worker_info.id
+                iter_start = self.start + worker_id * per_worker
+                iter_end = min(iter_start + per_worker, self.end)
+            data_iter = self._sample_generator(iter_start, iter_end)
+            return cycle(data_iter)
+
+        @staticmethod
+        def _get_file_info(file_path):
+            info = {'start': 1, 'end': 0}
+            for _ in io_utils.load_jsonl_iter(file_path):
+                info['end'] += 1
+            return info
+
+        def __len__(self):
+            return self.end - self.start
+
+        @staticmethod
+        def _search(sequence: list, pattern: list):
+            n = len(pattern)
+            for i in range(len(sequence)):
+                if sequence[i: i + n] == pattern:
+                    return i
+            return -1
+
+        def _sample_generator(self, start, end):
+            # text bert token
+            batch_token_ids = np.zeros((self.batch_size, self.max_seq_len), dtype=np.int32)
+            batch_mask_ids = np.zeros((self.batch_size, self.max_seq_len), dtype=np.int_)
+            batch_segment_ids = np.zeros((self.batch_size, self.max_seq_len), dtype=np.int_)
+            batch_subject_ids = np.zeros((self.batch_size, 2), dtype=np.int_)
+            batch_subject_labels = np.zeros((self.batch_size, self.max_seq_len, 2), dtype=np.int_)
+            batch_object_labels = np.zeros((self.batch_size, self.max_seq_len, self.num_rel, 2), dtype=np.int_)
+            batch_i = 0
+            for i, data in enumerate(io_utils.load_jsonl_iter(self.file_path)):
+                if i < start:
+                    continue
+                if i >= end:
+                    return StopIteration
+                text = data['text']
+                spo_list = data['triple_list']
+                batch_token_ids[batch_i, :] = self.tokenizer.encode(text,
+                                                                    max_length=self.max_seq_len,
+                                                                    pad_to_max_length=True,
+                                                                    add_special_tokens=True)
+                batch_mask_ids[batch_i, :len(text) + 2] = 1  # text mask
+                idx = np.random.randint(0, len(spo_list), size=1)[0]
+                s_rand = self.tokenizer.encode(spo_list[idx][0])[1:-1]
+                s_rand_idx = self._search(list(batch_token_ids[batch_i, :]), s_rand)
+                # subject token sentence idx
+                batch_subject_ids[batch_i, :] = [s_rand_idx, s_rand_idx + len(s_rand) - 1]
+                for j, spo in enumerate(spo_list):
+                    s = self.tokenizer.encode(spo[0])[1: -1]
+                    p = self.rel2id.get(spo[1])
+                    o = self.tokenizer.encode(spo[2])[1: -1]
+                    s_idx = self._search(list(batch_token_ids[batch_i]), s)
+                    o_idx = self._search(list(batch_token_ids[batch_i]), o)
+                    if s_idx != -1 and o_idx != -1:
+                        # subject start, end set 1
+                        batch_subject_labels[batch_i, s_idx, 0] = 1
+                        batch_subject_labels[batch_i, s_idx + len(s) - 1, 1] = 1
+                        if s_idx == s_rand_idx:
+                            batch_object_labels[batch_i, o_idx, p, 0] = 1
+                            batch_object_labels[batch_i, o_idx + len(o) - 1, p, 1] = 1
+                batch_i += 1
+                if batch_i == self.batch_size or i == end:
+                    yield batch_token_ids, batch_mask_ids, batch_segment_ids, batch_subject_labels, batch_subject_ids, \
+                          batch_object_labels
+                    batch_token_ids[:, :] = 0
+                    batch_mask_ids[:, :] = 0
+                    batch_subject_ids[:, :] = 0
+                    batch_subject_labels[:, :, :] = 0
+                    batch_object_labels[:, :, :, :] = 0
+                    batch_i = 0
+
+    def get_dataloaders(self):
+        train_data = self.RelIterableDataset(Path(self.data_dir, self._train_file_name),
+                                             self.tokenizer,
+                                             self.max_length,
+                                             self.batch_size,
+                                             self.rel2id)
+        dev_data = self.RelIterableDataset(Path(self.data_dir, self._valid_file_name),
+                                           self.tokenizer,
+                                           self.max_length,
+                                           self.batch_size,
+                                           self.rel2id)
+        test_data = self.RelIterableDataset(Path(self.data_dir, self._test_file_name),
+                                            self.tokenizer,
+                                            self.max_length,
+                                            self.batch_size,
+                                            self.rel2id)
+        return DataLoader(train_data), DataLoader(dev_data), DataLoader(test_data)

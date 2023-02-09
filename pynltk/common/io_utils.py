@@ -21,6 +21,7 @@ def mkdir_decorator(arg_index: int = 0, kind: int = 0):
     Returns:
 
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -34,7 +35,9 @@ def mkdir_decorator(arg_index: int = 0, kind: int = 0):
                 raise Exception(f"kind value must int and in [0, 1], you input is {kind}, type is {type(kind)}")
             file_dir.mkdir(exist_ok=True)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -280,6 +283,23 @@ def load_jsonl(fp: Path, verbose: bool = True) -> List[Dict]:  # noqa
         return []
     with open(fp, 'r', encoding='utf8') as reader:
         return [json.loads(i) for i in reader]
+
+
+def load_jsonl_iter(fp: Path, verbose: bool = True):
+    """
+    read jsonl with iterate
+    Args:
+        fp: file path
+        verbose: whether print log, default true
+
+    Returns:
+
+    """
+    if not fp.exists():
+        return {}
+    with open(fp, 'r', encoding='utf8') as reader:
+        for i in reader:
+            yield json.loads(i)
 
 
 def jsonl2csv(fp: Path, verbose: bool = True, is_include_head: bool = True) -> Path:
