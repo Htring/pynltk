@@ -1,4 +1,4 @@
-![](./images/logo.png)
+![](https://github.com/Htring/pynltk/blob/main/images/logo.png)
 
 
 
