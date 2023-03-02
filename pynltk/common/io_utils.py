@@ -7,7 +7,7 @@ import json
 import pickle
 import csv
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Union
 from loguru import logger
 from functools import wraps
 
@@ -247,8 +247,8 @@ def __save_t_csv(data: List[Dict], fp: Path, write_head: bool = True, verbose: b
         writer.writerows(data)
 
 
-@mkdir_decorator(arg_index=0, kind=0)
-def save_jsonl(fp: Path, data: List[Dict], verbose: bool = True) -> None:  # noqa
+@mkdir_decorator(arg_index=1, kind=0)
+def save_jsonl(data: List[Dict], fp: Path, verbose: bool = True) -> None:  # noqa
     """
     save data to jsonl file
     Args:
@@ -266,7 +266,7 @@ def save_jsonl(fp: Path, data: List[Dict], verbose: bool = True) -> None:  # noq
         writer.write("\n".join([json.dumps(i, ensure_ascii=False) for i in data]))
 
 
-def load_jsonl(fp: Path, verbose: bool = True) -> List[Dict]:  # noqa
+def load_jsonl(fp: Union[Path, str], verbose: bool = True) -> List[Dict]:  # noqa
     """
     load jsonl data from fp
     Args:
@@ -277,6 +277,8 @@ def load_jsonl(fp: Path, verbose: bool = True) -> List[Dict]:  # noqa
         object: List[Dict]
 
     """
+    if isinstance(fp, str):
+        fp = Path(fp)
     if verbose:
         logger.info(f"load jsonl from {fp}")
     if not fp.exists():
@@ -285,7 +287,7 @@ def load_jsonl(fp: Path, verbose: bool = True) -> List[Dict]:  # noqa
         return [json.loads(i) for i in reader]
 
 
-def load_jsonl_iter(fp: Path, verbose: bool = True):
+def load_jsonl_iter(fp: Union[Path, str], verbose: bool = True):
     """
     read jsonl with iterate
     Args:
@@ -295,8 +297,12 @@ def load_jsonl_iter(fp: Path, verbose: bool = True):
     Returns:
 
     """
+    if isinstance(fp, str):
+        fp = Path(fp)
     if not fp.exists():
         return {}
+    if verbose:
+        logger.info(f"has been load data from {fp}")
     with open(fp, 'r', encoding='utf8') as reader:
         for i in reader:
             yield json.loads(i)
@@ -423,13 +429,13 @@ def read_lines(fp: Path, verbose: bool = True, **kwargs) -> List[str]:
         return reader.readlines()
 
 
-@mkdir_decorator(arg_index=0, kind=0)
-def save_lines(fp: Path, data_list: List[str], verbose: bool = True, **kwargs) -> None:
+@mkdir_decorator(arg_index=1, kind=0)
+def save_lines(data_list: List[str], fp: Path, verbose: bool = True, **kwargs) -> None:
     """
     save data to path
     Args:
-        data_list:
-        fp:
+        data_list(List[str]): need save
+        fp: save file path
         verbose:
         **kwargs:
 

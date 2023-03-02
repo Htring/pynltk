@@ -3,16 +3,14 @@
 # @FileName  :dataset.py
 # @Time      :2023/1/20 14:34
 # @Author    :juzipi
-import math
 import os
 from collections import OrderedDict
-from itertools import cycle
 from pathlib import Path
 from typing import List, Dict, Union
 import torch
 from pynltk.common import io_utils
 from transformers import BertTokenizer
-from torch.utils.data import Dataset, DataLoader, IterableDataset, get_worker_info
+from torch.utils.data import Dataset, DataLoader
 from ..common.vocab import Vocab
 from ..common.serializer import Serializer
 from ..common.io_utils import load_csv2jsonl
@@ -349,15 +347,28 @@ class PCNNDataProcessor(DataProcessor):
 
 
 class DataProcessorBert(DataProcessorBase):
-    _train_file_name = "train_triples.json"
-    _valid_file_name = "dev_triples.json"
-    _test_file_name = "test_triples.json"
-    _rel2id_file_name = "rel2id.json"
+    _train_file_name = "train.json"
+    _valid_file_name = "dev.json"
+    _test_file_name = "test.json"
+    _schema_file_name = "schema.json"
 
     def __init__(self, data_dir):
         super(DataProcessorBert, self).__init__(data_dir)
-        self._check_corpus([self._train_file_name, self._valid_file_name, self._test_file_name, self._rel2id_file_name])
-        self.rel2id, self.id2rel = io_utils.load_json(Path(self.data_dir, self._rel2id_file_name))
+        self._check_corpus([self._train_file_name, self._valid_file_name, self._test_file_name, self._schema_file_name])
+        self.schema = {}
+        self.rel2id = {}
+        self._load_schema()
+
+    def _load_schema(self):
+        """
+        load schema from file
+        Returns:
+
+        """
+        schema_path = Path(self.data_dir, self._schema_file_name)
+        for schema in io_utils.load_jsonl(schema_path):
+            self.schema[schema['id']] = schema
+            self.rel2id[schema['predicate']] = schema['id']
 
 
 class CasRelDataProcessor(DataProcessorBert):
@@ -369,117 +380,102 @@ class CasRelDataProcessor(DataProcessorBert):
         self.max_length = max_length
         self.batch_size = batch_size
 
-    class RelIterableDataset(IterableDataset):  # noqa
+    class RelDataset(Dataset):
         """
         big data read
         """
 
-        def __init__(self, file_path, tokenizer, max_seq_len, batch_size, rel2id: dict):
-            self.file_path = file_path
-            self.info = self._get_file_info(file_path)
-            self.start = self.info['start']
-            self.end = self.info['end']
-            self.tokenizer = tokenizer
-            self.max_seq_len = max_seq_len
-            self.rel2id = rel2id
-            self.num_rel = len(self.rel2id)
-            self.batch_size = batch_size
-
-        def __iter__(self):
-            worker_info = get_worker_info()
-            if worker_info is None:
-                iter_start = self.start
-                iter_end = self.end
-            else:
-                per_worker = int(math.ceil((self.end - self.start) / float(worker_info.num_workers)))
-                worker_id = worker_info.id
-                iter_start = self.start + worker_id * per_worker
-                iter_end = min(iter_start + per_worker, self.end)
-            data_iter = self._sample_generator(iter_start, iter_end)
-            return cycle(data_iter)
+        def __init__(self, file_path):
+            self.data_list = self.get_data_list(file_path)
 
         @staticmethod
-        def _get_file_info(file_path):
-            info = {'start': 1, 'end': 0}
-            for _ in io_utils.load_jsonl_iter(file_path):
-                info['end'] += 1
-            return info
+        def get_data_list(file_path):
+            return io_utils.load_jsonl(file_path)
 
         def __len__(self):
-            return self.end - self.start
+            return len(self.data_list)
 
-        @staticmethod
-        def _search(sequence: list, pattern: list):
+        def __getitem__(self, item):
+            example = self.data_list[item]
+            return example['text'], example['triple_list']
+
+    def collate_fn(self, batch):
+
+        def search(sequence, pattern):
             n = len(pattern)
-            for i in range(len(sequence)):
-                if sequence[i: i + n] == pattern:
-                    return i
+            for _i in range(len(sequence)):
+                if sequence[_i: _i + n] == pattern:
+                    return _i
             return -1
 
-        def _sample_generator(self, start, end):
-            # text bert token
-            batch_token_ids = np.zeros((self.batch_size, self.max_seq_len), dtype=np.int32)
-            batch_mask_ids = np.zeros((self.batch_size, self.max_seq_len), dtype=np.int_)
-            batch_segment_ids = np.zeros((self.batch_size, self.max_seq_len), dtype=np.int_)
-            batch_subject_ids = np.zeros((self.batch_size, 2), dtype=np.int_)
-            batch_subject_labels = np.zeros((self.batch_size, self.max_seq_len, 2), dtype=np.int_)
-            batch_object_labels = np.zeros((self.batch_size, self.max_seq_len, self.num_rel, 2), dtype=np.int_)
-            batch_i = 0
-            for i, data in enumerate(io_utils.load_jsonl_iter(self.file_path)):
-                if i < start:
-                    continue
-                if i >= end:
-                    return StopIteration
-                text = data['text']
-                spo_list = data['triple_list']
-                batch_token_ids[batch_i, :] = self.tokenizer.encode(text,
-                                                                    max_length=self.max_seq_len,
-                                                                    pad_to_max_length=True,
-                                                                    add_special_tokens=True)
-                batch_mask_ids[batch_i, :len(text) + 2] = 1  # text mask
-                idx = np.random.randint(0, len(spo_list), size=1)[0]
-                s_rand = self.tokenizer.encode(spo_list[idx][0])[1:-1]
-                s_rand_idx = self._search(list(batch_token_ids[batch_i, :]), s_rand)
-                # subject token sentence idx
-                batch_subject_ids[batch_i, :] = [s_rand_idx, s_rand_idx + len(s_rand) - 1]
-                for j, spo in enumerate(spo_list):
-                    s = self.tokenizer.encode(spo[0])[1: -1]
-                    p = self.rel2id.get(spo[1])
-                    o = self.tokenizer.encode(spo[2])[1: -1]
-                    s_idx = self._search(list(batch_token_ids[batch_i]), s)
-                    o_idx = self._search(list(batch_token_ids[batch_i]), o)
-                    if s_idx != -1 and o_idx != -1:
-                        # subject start, end set 1
-                        batch_subject_labels[batch_i, s_idx, 0] = 1
-                        batch_subject_labels[batch_i, s_idx + len(s) - 1, 1] = 1
-                        if s_idx == s_rand_idx:
-                            batch_object_labels[batch_i, o_idx, p, 0] = 1
-                            batch_object_labels[batch_i, o_idx + len(o) - 1, p, 1] = 1
-                batch_i += 1
-                if batch_i == self.batch_size or i == end:
-                    yield batch_token_ids, batch_mask_ids, batch_segment_ids, batch_subject_labels, batch_subject_ids, \
-                          batch_object_labels
-                    batch_token_ids[:, :] = 0
-                    batch_mask_ids[:, :] = 0
-                    batch_subject_ids[:, :] = 0
-                    batch_subject_labels[:, :, :] = 0
-                    batch_object_labels[:, :, :, :] = 0
-                    batch_i = 0
+        batch_subject_labels = []
+        batch_object_labels = []
+        batch_subject_ids = []
+        batch_token_ids = []
+        batch_attention_mask = []
+        batch_token_type_ids = []
+        for text, triples in batch:
+            if len(text) > self.max_length - 2:
+                text = text[: self.max_length - 2]
+            tokens = list(text)
+            spoes = {}
+            callback_text_labels = []
+            for s, p, o in triples:
+                p_id = int(self.rel2id.get(p))
+                s_idx = search(text, s)
+                o_idx = search(text, o)
+                if s_idx != -1 and o_idx != -1:
+                    callback_text_labels.append((s, p, o))
+                    s = (s_idx, s_idx + len(s) - 1)
+                    o = (o_idx, o_idx + len(o) - 1, p_id)
+                    spoes.setdefault(s, [])
+                    spoes[s].append(o)
+            if spoes:
+                subject_labels = np.zeros((self.max_length, 2))
+                for s in spoes:
+                    subject_labels[s[0], 0] = 1  # subject head
+                    subject_labels[s[1], 1] = 1  # subject tail
+                start, end = np.array(list(spoes.keys())).T
+                start = np.random.choice(start)
+                end = np.random.choice(end[end >= start])
+                # random for a valid subject
+                subject_ids = (start, end)
+                # object label
+                object_labels = np.zeros((self.max_length, len(self.rel2id), 2))
+                for o in spoes.get(subject_ids, []):
+                    object_labels[o[0], o[2], 0] = 1  # object start
+                    object_labels[o[1], o[2], 1] = 1  # object tail
+                # build batch
+                encode = self.tokenizer.encode_plus(tokens, padding="max_length", max_length=self.max_length)
+                batch_token_ids.append(encode['input_ids'])
+                batch_attention_mask.append(encode['attention_mask'])
+                batch_token_type_ids.append(encode['token_type_ids'])
+                batch_subject_labels.append(subject_labels)
+                batch_object_labels.append(object_labels)
+                batch_subject_ids.append(subject_ids)
+                # callback_text_labels.append((text, callback_text_labels))
+        token_ids = torch.tensor(batch_token_ids, dtype=torch.long)
+        attention_mask = torch.tensor(batch_attention_mask, dtype=torch.long)
+        token_type_ids = torch.tensor(batch_token_type_ids, dtype=torch.long)
+        subject_labels = torch.tensor(batch_subject_labels, dtype=torch.float)
+        object_labels = torch.tensor(batch_object_labels, dtype=torch.float)
+        subject_ids = torch.tensor(batch_subject_ids, dtype=torch.long)
+        return token_ids, attention_mask, token_type_ids, subject_labels, object_labels, subject_ids
 
     def get_dataloaders(self):
-        train_data = self.RelIterableDataset(Path(self.data_dir, self._train_file_name),
-                                             self.tokenizer,
-                                             self.max_length,
-                                             self.batch_size,
-                                             self.rel2id)
-        dev_data = self.RelIterableDataset(Path(self.data_dir, self._valid_file_name),
-                                           self.tokenizer,
-                                           self.max_length,
-                                           self.batch_size,
-                                           self.rel2id)
-        test_data = self.RelIterableDataset(Path(self.data_dir, self._test_file_name),
-                                            self.tokenizer,
-                                            self.max_length,
-                                            self.batch_size,
-                                            self.rel2id)
-        return DataLoader(train_data), DataLoader(dev_data), DataLoader(test_data)
+        train_data = self.RelDataset(Path(self.data_dir, self._train_file_name))
+        dev_data = self.RelDataset(Path(self.data_dir, self._valid_file_name))
+        test_data = self.RelDataset(Path(self.data_dir, self._test_file_name))
+        train_dataloader = DataLoader(train_data,
+                                      batch_size=self.batch_size,
+                                      shuffle=True,
+                                      collate_fn=self.collate_fn)
+        dev_dataloader = DataLoader(dev_data,
+                                    batch_size=self.batch_size,
+                                    shuffle=True,
+                                    collate_fn=self.collate_fn)
+        test_dataloader = DataLoader(test_data,
+                                     batch_size=self.batch_size,
+                                     shuffle=True,
+                                     collate_fn=self.collate_fn)
+        return train_dataloader, dev_dataloader, test_dataloader

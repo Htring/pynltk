@@ -10,7 +10,7 @@ from loguru import logger
 import torch
 from torch.utils.data import RandomSampler, SequentialSampler, DataLoader, TensorDataset
 from transformers import BertTokenizer
-
+from multiprocessing import cpu_count
 from .data_util import read_seq_tag_file
 
 
@@ -36,7 +36,7 @@ class InputExample(object):
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_ids,label_mask=None):
+    def __init__(self, input_ids, input_mask, segment_ids, label_ids, label_mask=None):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
@@ -51,6 +51,7 @@ class DataProcessor(object):
     pad_tag = "<pad>"
     labels = {"O"}
     chars = set()
+    cpu_count = cpu_count()
 
     def __init__(self, data_dir):
         self.data_dir = data_dir
@@ -89,7 +90,7 @@ class DataProcessor(object):
             self.labels.update(label)
             self.chars.update(sentence)
             examples.append(InputExample(guid=guid, text=sentence, label=label))
-        # examples.sort(key=lambda x: -len(x.text))
+        examples.sort(key=lambda x: -len(x.text))
         return examples
 
     def _load_data(self):
@@ -180,15 +181,18 @@ class NERDataProcessorCommon(DataProcessor):
         self.train_data_loader = DataLoader(train_examples,  # noqa
                                             sampler=train_sampler,
                                             batch_size=batch_size,
-                                            collate_fn=lambda x: self.collate_fn(x, self.char2idx, self.tag2idx))
+                                            collate_fn=lambda x: self.collate_fn(x, self.char2idx, self.tag2idx),
+                                            num_workers=self.cpu_count)
         self.dev_data_loader = DataLoader(dev_examples,  # noqa
                                           sampler=eval_sampler,
                                           batch_size=batch_size,
-                                          collate_fn=lambda x: self.collate_fn(x, self.char2idx, self.tag2idx))
+                                          collate_fn=lambda x: self.collate_fn(x, self.char2idx, self.tag2idx),
+                                          num_workers=self.cpu_count)
         self.test_data_loader = DataLoader(test_examples,  # noqa
                                            sampler=test_sampler,
                                            batch_size=batch_size,
-                                           collate_fn=lambda x: self.collate_fn(x, self.char2idx, self.tag2idx))
+                                           collate_fn=lambda x: self.collate_fn(x, self.char2idx, self.tag2idx),
+                                           num_workers=self.cpu_count)
         return self.train_data_loader, self.dev_data_loader, self.test_data_loader
 
 
@@ -309,7 +313,7 @@ class NERDataProcessorBertSoftmax(DataProcessor):
         all_label_mask_ids = torch.tensor([f.label_mask for f in train_features], dtype=torch.long)
         tensor_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_label_mask_ids)
         sampler = RandomSampler(tensor_data)
-        return DataLoader(tensor_data, sampler=sampler, batch_size=self.batch_size)
+        return DataLoader(tensor_data, sampler=sampler, batch_size=self.batch_size, num_workers=self.cpu_count)
 
     def get_data_loaders(self):
         """
